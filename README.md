@@ -310,7 +310,20 @@ The complete technical documentation is available here:
 
 **[Technical Documentation — Architecture, Implementation, Deployment and Testing](docs/README.md)**
 
-Documentation is provided in English and Russian.y.
+Documentation is provided in English and Russian.
+
+
+### Demo Scenarios
+
+Explore four practical MCP-based data engineering workflows:
+
+- PostgreSQL Metadata Exploration
+- DWH SQL Mapping and Reconciliation
+- Azure Databricks Knowledge Object Investigation
+- Data Grain Validation
+
+**[Explore Demo Scenarios](demo/README.md)**
+
 
 ## 13. Project Background
 
