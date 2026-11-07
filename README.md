@@ -306,7 +306,11 @@ The repository is being prepared with additional material covering:
 - Testing and Validation
 - Demo Scenarios
 
-Documentation will be available in the `docs/` directory.
+The complete technical documentation is available here:
+
+**[Technical Documentation — Architecture, Implementation, Deployment and Testing](docs/README.md)**
+
+Documentation is provided in English and Russian.y.
 
 ## 13. Project Background
 
