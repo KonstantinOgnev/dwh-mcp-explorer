@@ -1,4 +1,4 @@
-
+import os
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import (
     StatementParameterListItem,
@@ -9,13 +9,22 @@ from databricks.sdk.service.sql import (
 class DatabricksLineageProvider:
     """Read-only access to Databricks system lineage tables."""
 
+
     def __init__(
         self,
         profile: str = "MARKETPLACE_LAB",
-        warehouse_id: str = "25ad047cd183f06d",
+        warehouse_id: str | None = None,
     ):
         self.client = WorkspaceClient(profile=profile)
-        self.warehouse_id = warehouse_id
+
+        self.warehouse_id = (
+            warehouse_id or os.getenv("DATABRICKS_WAREHOUSE_ID")
+        )
+
+        if not self.warehouse_id:
+            raise ValueError(
+                "DATABRICKS_WAREHOUSE_ID is not configured"
+            )
 
     def _execute_query(
         self,

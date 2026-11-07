@@ -240,6 +240,25 @@ Authenticate using Databricks CLI and a named profile such as:
 databricks auth login --profile MARKETPLACE_LAB
 ```
 
+### Databricks SQL Warehouse Configuration
+
+The SQL Warehouse ID is configured using an environment variable rather than being hardcoded in the source code.
+
+Add the following setting to your local `.env` file:
+
+```dotenv
+DATABRICKS_WAREHOUSE_ID=your_warehouse_id
+```
+
+Replace `your_warehouse_id` with the ID of a SQL Warehouse accessible to your Databricks account.
+
+The application loads `.env` through `python-dotenv` when `server.py` starts.
+
+The `DatabricksGrainProvider` and `DatabricksLineageProvider` classes use this configuration for SQL execution. An explicit `warehouse_id` constructor argument can also be provided.
+
+The `.env` file must remain local and must not be committed to Git.
+
+
 The current project implementation uses the `MARKETPLACE_LAB` profile and a configured SQL Warehouse. Adapt these settings to your own workspace before running Databricks-specific functionality.
 
 ### Start the MCP server
