@@ -1,0 +1,219 @@
+import asyncio
+import json
+
+from anthropic import AsyncAnthropic
+from mcp import Client
+
+from server import mcp
+from dwh_mcp.agent.config import load_agent_config
+from dwh_mcp.agent.mcp_client import get_agent_tools, ALLOWED_TOOLS
+from dwh_mcp.agent.prompts import SYSTEM_PROMPT
+from dwh_mcp.agent.run_logging import RunLogger
+from dwh_mcp.agent.compact_results import compact_tool_content
+
+
+async def _run_agent(task: str, config, log: RunLogger) -> str:
+    messages = [{"role": "user", "content": task}]
+    total_input = 0
+    total_output = 0
+
+    async with (
+        AsyncAnthropic(
+            api_key=config.api_key,
+            max_retries=0,
+            timeout=120.0,
+        ) as model,
+        Client(mcp, raise_exceptions=True) as tools_client,
+    ):
+        tools = await get_agent_tools(tools_client)
+        log.write_json("tools.json", tools)
+        log.write_json("prompt.json", {"system": SYSTEM_PROMPT})
+
+        for step in range(1, config.max_steps + 1):
+            print(f"\n[Step {step}] Calling Claude...", flush=True)
+
+            response = await model.messages.create(
+                model=config.model,
+                system=SYSTEM_PROMPT,
+                max_tokens=config.max_tokens,
+                tools=tools,
+                messages=messages,
+            )
+
+            total_input += response.usage.input_tokens
+            total_output += response.usage.output_tokens
+            log.event(
+                "model_response",
+                step=step,
+                response=response.model_dump(
+                    mode="json", exclude_none=True
+                ),
+                total_input_tokens=total_input,
+                total_output_tokens=total_output,
+            )
+
+            # Preserve every response block, including thinking blocks.
+            messages.append({
+                "role": "assistant",
+                "content": [
+                    block.model_dump(mode="json", exclude_none=True)
+                    for block in response.content
+                ],
+            })
+
+            print(
+                f"[Usage] input={total_input}, "
+                f"output={total_output}",
+                flush=True,
+            )
+
+            if response.stop_reason == "end_turn":
+                return "\n".join(
+                    block.text
+                    for block in response.content
+                    if block.type == "text"
+                )
+
+            if response.stop_reason == "max_tokens":
+                partial_report = "\n".join(
+                    block.text
+                    for block in response.content
+                    if block.type == "text"
+                )
+
+                (log.directory / "partial_report.md").write_text(
+                    partial_report,
+                    encoding="utf-8",
+                )
+
+            if response.stop_reason != "tool_use":
+                raise RuntimeError(
+                    "Investigation stopped without a completed report: "
+                    f"{response.stop_reason}"
+                )
+
+            # Do not execute more tools if no model turn remains
+            # to interpret their results.
+            if step == config.max_steps:
+                break
+
+            results = []
+
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+
+                print(
+                    f"[Tool] {block.name}: "
+                    f"{json.dumps(block.input, ensure_ascii=False)}",
+                    flush=True,
+                )
+
+                log.event(
+                    "tool_call",
+                    step=step,
+                    tool=block.name,
+                    arguments=block.input,
+                )
+
+                try:
+                    if block.name not in ALLOWED_TOOLS:
+                        raise ValueError("Tool is not allowed")
+
+                    result = await asyncio.wait_for(
+                        tools_client.call_tool(
+                            block.name,
+                            block.input,
+                        ),
+                        timeout=120.0,
+                    )
+
+                    is_error = bool(result.is_error)
+
+                    # Retain structured evidence and text content.
+                    content = json.dumps(
+                        result.model_dump(
+                            mode="json",
+                            exclude_none=True,
+                        ),
+                        ensure_ascii=False,
+                    )
+
+                except Exception as error:
+                    is_error = True
+                    content = json.dumps({
+                        "error_type": type(error).__name__,
+                        "message": "Tool execution failed; "
+                                   "no evidence was obtained.",
+                    })
+
+                log.event(
+                    "tool_result",
+                    step=step,
+                    tool=block.name,
+                    tool_use_id=block.id,
+                    is_error=is_error,
+                    content=content,
+                )
+
+                model_content = compact_tool_content(
+                    block.name,
+                    content,
+                )
+
+                log.event(
+                    "model_tool_result",
+                    step=step,
+                    tool=block.name,
+                    tool_use_id=block.id,
+                    content=model_content,
+                    original_characters=len(content),
+                    model_characters=len(model_content),
+                )
+
+                results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": model_content,
+                    "is_error": is_error,
+                })
+
+            if not results:
+                raise RuntimeError(
+                    "Claude requested tool use but supplied no tool calls"
+                )
+
+            messages.append({
+                "role": "user",
+                "content": results,
+            })
+
+    raise RuntimeError(
+        f"Reached the limit of {config.max_steps} model calls. "
+        "The investigation is incomplete."
+    )
+
+async def run_agent(task: str) -> str:
+    config = load_agent_config()
+    log = RunLogger(task, config)
+
+    print(f"[Run directory] {log.directory}", flush=True)
+
+    try:
+        report = await _run_agent(task, config, log)
+        log.save_report(report)
+        log.finish("completed")
+        return report
+
+    except BaseException as error:
+        status = (
+            "interrupted"
+            if isinstance(error, (KeyboardInterrupt, asyncio.CancelledError))
+            else "failed"
+        )
+
+        log.finish(
+            status,
+            error_type=type(error).__name__,
+        )
+        raise
