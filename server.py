@@ -13,6 +13,7 @@ from dwh_mcp import reporting as reporting_service
 from dwh_mcp import composition as composition_service
 from dwh_mcp.databricks_provider import DatabricksMetadataProvider
 from dwh_mcp.databricks_lineage_provider import DatabricksLineageProvider
+from dwh_mcp.errors import classify_databricks_error
 
 from dwh_mcp.databricks_knowledge import (
     investigate_databricks_object,
@@ -268,14 +269,25 @@ def databricks_list_tables(
         schema_name,
     )
 
-
 @mcp.tool()
-def databricks_describe_table(
-    full_name: str,
-) -> dict:
-    """Describe a Unity Catalog table and its columns."""
-    return _databricks_provider().describe_table(full_name)
+def databricks_describe_table(full_name: str) -> dict:
+    """Describe a Unity Catalog table and its columns.
 
+    On failure, return status=failed and a structured error.
+    Check status before interpreting the response as metadata.
+    """
+    try:
+        return _databricks_provider().describe_table(full_name)
+
+    except Exception as error:
+        return {
+            "status": "failed",
+            "full_name": full_name,
+            "error": classify_databricks_error(
+                "databricks_metadata",
+                error,
+            ),
+        }
 
 # ---------------------------------------------------------
 # Databricks Lineage MCP Tools

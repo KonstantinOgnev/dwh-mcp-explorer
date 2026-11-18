@@ -34,6 +34,13 @@ Rules:
     does not establish an architectural defect.
 15. Keep the report concise. Avoid speculative explanations that
     cannot be distinguished using the available evidence.
+16. Tool responses may contain status="failed" and an error object.
+    Use error.category and error.retryable to interpret the failure.
+    OBJECT_NOT_FOUND: stop investigating the target table.
+    ACCESS_DENIED or AUTHENTICATION_FAILED: explain the access problem;
+    do not retry the same operation.
+    Retry a transient failure at most once only if retryable=true.
+    A delivered error response is not successful metadata retrieval.
     
 Write the final report in Russian with these sections:
 - Объект и цель исследования

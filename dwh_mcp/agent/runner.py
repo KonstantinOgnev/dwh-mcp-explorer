@@ -128,9 +128,23 @@ async def _run_agent(task: str, config, log: RunLogger) -> str:
                         timeout=120.0,
                     )
 
-                    is_error = bool(result.is_error)
+                    payload = result.structured_content
 
-                    # Retain structured evidence and text content.
+                    if payload is None:
+                        for item in result.content:
+                            if item.type == "text":
+                                try:
+                                    payload = json.loads(item.text)
+                                except json.JSONDecodeError:
+                                    pass
+                                break
+
+                    operation_failed = (
+                        isinstance(payload, dict)
+                        and payload.get("status") == "failed"
+                    )
+
+                    is_error = bool(result.is_error) or operation_failed
                     content = json.dumps(
                         result.model_dump(
                             mode="json",
