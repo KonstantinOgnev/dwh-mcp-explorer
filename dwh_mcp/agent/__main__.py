@@ -23,7 +23,9 @@ def main():
         "Подготовь отчёт с подтверждениями и ограничениями."
     )
 
-    report = asyncio.run(run_agent(task))
+    report = asyncio.run(
+        run_agent(task, target_table=args.table)
+    )
 
     print("\n========== ИТОГОВЫЙ ОТЧЁТ ==========\n")
     print(report)

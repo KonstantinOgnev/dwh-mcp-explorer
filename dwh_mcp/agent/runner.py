@@ -10,9 +10,18 @@ from dwh_mcp.agent.mcp_client import get_agent_tools, ALLOWED_TOOLS
 from dwh_mcp.agent.prompts import SYSTEM_PROMPT
 from dwh_mcp.agent.run_logging import RunLogger
 from dwh_mcp.agent.compact_results import compact_tool_content
+from dwh_mcp.agent.execution_policy import (
+    ExecutionPolicy,
+    ExecutionPolicyError,
+)
 
 
-async def _run_agent(task: str, config, log: RunLogger) -> str:
+async def _run_agent(
+    task: str,
+    config,
+    log: RunLogger,
+    policy: ExecutionPolicy,
+) -> str:
     messages = [{"role": "user", "content": task}]
     total_input = 0
     total_output = 0
@@ -117,9 +126,21 @@ async def _run_agent(task: str, config, log: RunLogger) -> str:
                 )
 
                 try:
-                    if block.name not in ALLOWED_TOOLS:
-                        raise ValueError("Tool is not allowed")
+                    policy.before_call(block.name, block.input)
+                except ExecutionPolicyError as error:
+                    log.event(
+                        "tool_call_blocked",
+                        step=step,
+                        tool=block.name,
+                        tool_use_id=block.id,
+                        reason=str(error),
+                        tool_calls=policy.tool_calls,
+                    )
+                    raise
 
+                payload = None
+
+                try:
                     result = await asyncio.wait_for(
                         tools_client.call_tool(
                             block.name,
@@ -160,6 +181,12 @@ async def _run_agent(task: str, config, log: RunLogger) -> str:
                         "message": "Tool execution failed; "
                                    "no evidence was obtained.",
                     })
+                policy.after_call(
+                    block.name,
+                    block.input,
+                    is_error=is_error,
+                    payload=payload,
+                )
 
                 log.event(
                     "tool_result",
@@ -207,14 +234,25 @@ async def _run_agent(task: str, config, log: RunLogger) -> str:
         "The investigation is incomplete."
     )
 
-async def run_agent(task: str) -> str:
+async def run_agent(task: str, *, target_table: str) -> str:
     config = load_agent_config()
+    policy = ExecutionPolicy(
+        target_table=target_table,
+        allowed_tools=ALLOWED_TOOLS,
+        max_tool_calls=config.max_tool_calls,
+    )
     log = RunLogger(task, config)
+
+    log.event(
+        "execution_policy",
+        target_table=target_table,
+        max_tool_calls=config.max_tool_calls,
+    )
 
     print(f"[Run directory] {log.directory}", flush=True)
 
     try:
-        report = await _run_agent(task, config, log)
+        report = await _run_agent(task, config, log, policy)
         log.save_report(report)
         log.finish("completed")
         return report

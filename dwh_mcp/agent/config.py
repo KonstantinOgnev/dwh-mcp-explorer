@@ -10,6 +10,7 @@ class AgentConfig:
     model: str
     max_steps: int = 10
     max_tokens: int = 8192
+    max_tool_calls: int = 8
 
 
 def load_agent_config() -> AgentConfig:
