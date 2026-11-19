@@ -3,6 +3,7 @@ import json
 
 from anthropic import AsyncAnthropic
 from mcp import Client
+from time import perf_counter
 
 from server import mcp
 from dwh_mcp.agent.config import load_agent_config
@@ -11,8 +12,8 @@ from dwh_mcp.agent.prompts import SYSTEM_PROMPT
 from dwh_mcp.agent.run_logging import RunLogger
 from dwh_mcp.agent.compact_results import compact_tool_content
 from dwh_mcp.agent.execution_policy import (
-    ExecutionPolicy,
-    ExecutionPolicyError,
+ExecutionPolicy,
+ExecutionPolicyError,
 )
 
 
@@ -25,6 +26,7 @@ async def _run_agent(
     messages = [{"role": "user", "content": task}]
     total_input = 0
     total_output = 0
+    call_attempts = {}
 
     async with (
         AsyncAnthropic(
@@ -41,6 +43,8 @@ async def _run_agent(
         for step in range(1, config.max_steps + 1):
             print(f"\n[Step {step}] Calling Claude...", flush=True)
 
+            model_started = perf_counter()
+
             response = await model.messages.create(
                 model=config.model,
                 system=SYSTEM_PROMPT,
@@ -54,6 +58,10 @@ async def _run_agent(
             log.event(
                 "model_response",
                 step=step,
+                status="completed",
+                duration_ms=round(
+                    (perf_counter() - model_started) * 1000, 3
+                ),
                 response=response.model_dump(
                     mode="json", exclude_none=True
                 ),
@@ -137,7 +145,26 @@ async def _run_agent(
                         tool_calls=policy.tool_calls,
                     )
                     raise
+                call_key = json.dumps(
+                    [block.name, block.input],
+                    sort_keys=True,
+                    ensure_ascii=False,
+                )
+                attempt = call_attempts.get(call_key, 0) + 1
+                call_attempts[call_key] = attempt
 
+                log.event(
+                    "tool_started",
+                    step=step,
+                    tool=block.name,
+                    tool_use_id=block.id,
+                    attempt=attempt,
+                    is_retry=attempt > 1,
+                    status="started",
+                )
+
+                tool_started = perf_counter()
+                error_code = None
                 payload = None
 
                 try:
@@ -166,6 +193,18 @@ async def _run_agent(
                     )
 
                     is_error = bool(result.is_error) or operation_failed
+                    if is_error:
+                        diagnostic = (
+                            payload.get("error")
+                            if isinstance(payload, dict)
+                            else None
+                        )
+                        error_code = (
+                            diagnostic.get("category")
+                            if isinstance(diagnostic, dict)
+                            else None
+                        )
+                        error_code = error_code or "MCP_TOOL_ERROR"
                     content = json.dumps(
                         result.model_dump(
                             mode="json",
@@ -176,6 +215,11 @@ async def _run_agent(
 
                 except Exception as error:
                     is_error = True
+                    error_code = (
+                        "TOOL_TIMEOUT"
+                        if isinstance(error, TimeoutError)
+                        else "TOOL_EXECUTION_ERROR"
+                    )
                     content = json.dumps({
                         "error_type": type(error).__name__,
                         "message": "Tool execution failed; "
@@ -195,6 +239,12 @@ async def _run_agent(
                     tool_use_id=block.id,
                     is_error=is_error,
                     content=content,
+                    status="failed" if is_error else "completed",
+                    error_code=error_code,
+                    duration_ms=round(
+                        (perf_counter() - tool_started) * 1000, 3
+                    ),
+                    attempt=attempt,
                 )
 
                 model_content = compact_tool_content(

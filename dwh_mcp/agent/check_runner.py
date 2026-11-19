@@ -15,11 +15,22 @@ LINEAGE = "databricks_get_table_lineage"
 
 class FakeObject(SimpleNamespace):
     def model_dump(self, **kwargs):
-        return {
-            key: value
-            for key, value in vars(self).items()
-            if isinstance(value, (str, int, bool, dict, list))
-        }
+        def convert(value):
+            if isinstance(value, SimpleNamespace):
+                return {
+                    key: convert(item)
+                    for key, item in vars(value).items()
+                }
+            if isinstance(value, dict):
+                return {
+                    key: convert(item)
+                    for key, item in value.items()
+                }
+            if isinstance(value, (list, tuple)):
+                return [convert(item) for item in value]
+            return value
+
+        return convert(self)
 
 
 def tool_call(name=DESCRIBE, table=TABLE, call_id="call_1"):
@@ -55,7 +66,6 @@ def failed_result(category, retryable=False):
             "retryable": retryable,
         },
     })
-
 
 class RunnerTests(unittest.IsolatedAsyncioTestCase):
     async def run_scenario(
