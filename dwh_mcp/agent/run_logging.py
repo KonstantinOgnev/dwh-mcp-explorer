@@ -4,6 +4,10 @@ from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
 from dwh_mcp.agent.redaction import Redactor
+from dwh_mcp.agent.run_statistics import (
+    latency_summary,
+    estimate_cost,
+)
 
 
 class RunLogger:
@@ -22,6 +26,10 @@ class RunLogger:
         )
         self._started = perf_counter()
         self.redactor = Redactor(secrets=(config.api_key,))
+        self.input_rate = config.input_usd_per_million
+        self.output_rate = config.output_usd_per_million
+        self.model_durations = []
+        self.tool_durations = {}
 
         self.metrics = {
             "model_calls": 0,
@@ -76,6 +84,15 @@ class RunLogger:
                 ) + "\n"
             )
 
+        duration = data.get("duration_ms")
+        if duration is not None:
+            if event_type == "model_response":
+                self.model_durations.append(duration)
+            elif event_type == "tool_result":
+                self.tool_durations.setdefault(
+                    data["tool"], []
+                ).append(duration)
+
         # Update counters after the event has been written.
         if event_type == "model_response":
             self.metrics["model_calls"] += 1
@@ -112,6 +129,28 @@ class RunLogger:
                 (perf_counter() - self._started) * 1000, 3
             ),
             "metrics": dict(self.metrics),
+            "latency": {
+                "method": "nearest_rank",
+                "model": latency_summary(self.model_durations),
+                "tools": {
+                    tool: latency_summary(durations)
+                    for tool, durations in self.tool_durations.items()
+                },
+            },
+            "cost": {
+                "currency": "USD",
+                "model": data["model"],
+                "input_usd_per_million": self.input_rate,
+                "output_usd_per_million": self.output_rate,
+                "estimated_usd": estimate_cost(
+                    self.metrics["input_tokens"],
+                    self.metrics["output_tokens"],
+                    self.input_rate,
+                    self.output_rate,
+                ),
+                "basis": "Configured standard input/output token rates",
+                "excludes": "Cache pricing and other charges",
+            },
         })
 
         self.write_json("run.json", data)
