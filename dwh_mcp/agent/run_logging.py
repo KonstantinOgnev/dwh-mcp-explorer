@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
+from dwh_mcp.agent.redaction import Redactor
 
 
 class RunLogger:
@@ -20,6 +21,7 @@ class RunLogger:
             + uuid4().hex[:8]
         )
         self._started = perf_counter()
+        self.redactor = Redactor(secrets=(config.api_key,))
 
         self.metrics = {
             "model_calls": 0,
@@ -48,7 +50,11 @@ class RunLogger:
     def write_json(self, filename: str, data):
         path = self.directory / filename
         path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
+            json.dumps(
+                self.redactor.clean(data),
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
 
@@ -64,7 +70,10 @@ class RunLogger:
             "a", encoding="utf-8"
         ) as stream:
             stream.write(
-                json.dumps(record, ensure_ascii=False) + "\n"
+                json.dumps(
+                    self.redactor.clean(record),
+                    ensure_ascii=False,
+                ) + "\n"
             )
 
         # Update counters after the event has been written.
@@ -87,7 +96,7 @@ class RunLogger:
 
     def save_report(self, report: str):
         (self.directory / "report.md").write_text(
-            report,
+            self.redactor.text(report),
             encoding="utf-8",
         )
 

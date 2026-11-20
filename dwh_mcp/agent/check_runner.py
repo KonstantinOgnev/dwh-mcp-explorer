@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from dwh_mcp.agent import runner
 from dwh_mcp.agent.config import AgentConfig
+from dwh_mcp.agent.redaction import Redactor
 
 
 TABLE = "marketplace_lab.gold.fact_orders"
@@ -101,6 +102,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             log = MagicMock()
             log.directory = Path(directory)
+            log.redactor = Redactor(secrets=(config.api_key,))
 
             with (
                 patch.object(

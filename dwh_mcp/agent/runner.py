@@ -99,7 +99,7 @@ async def _run_agent(
                 )
 
                 (log.directory / "partial_report.md").write_text(
-                    partial_report,
+                    log.redactor.text(partial_report),
                     encoding="utf-8",
                 )
 
