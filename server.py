@@ -22,6 +22,8 @@ from dwh_mcp.databricks_knowledge import (
 from dwh_mcp.databricks_grain_provider import (
     DatabricksGrainProvider,
 )
+from mcp.server.mcpserver.context import Context
+from dwh_mcp.tool_tracing import traced_databricks_call
 
 load_dotenv()
 
@@ -270,24 +272,18 @@ def databricks_list_tables(
     )
 
 @mcp.tool()
-def databricks_describe_table(full_name: str) -> dict:
+def databricks_describe_table(full_name: str, ctx: Context) -> dict:
     """Describe a Unity Catalog table and its columns.
 
     On failure, return status=failed and a structured error.
     Check status before interpreting the response as metadata.
+    The _trace field contains diagnostic correlation information.
     """
-    try:
-        return _databricks_provider().describe_table(full_name)
-
-    except Exception as error:
-        return {
-            "status": "failed",
-            "full_name": full_name,
-            "error": classify_databricks_error(
-                "databricks_metadata",
-                error,
-            ),
-        }
+    return traced_databricks_call(
+        ctx,
+        full_name,
+        lambda trace: _databricks_provider().describe_table(full_name),
+    )
 
 # ---------------------------------------------------------
 # Databricks Lineage MCP Tools
@@ -299,28 +295,44 @@ def _databricks_lineage_provider() -> DatabricksLineageProvider:
 
 
 @mcp.tool()
-def databricks_get_table_lineage(full_name: str) -> dict:
-    """
-    Retrieve registered table-level lineage events
-    from Databricks system.access.table_lineage.
+def databricks_get_table_lineage(
+    full_name: str,
+    ctx: Context,
+) -> dict:
+    """Retrieve registered table lineage. Read-only; may be incomplete.
 
-    Read-only. Results may be limited or incomplete.
+    On failure, return status=failed and a structured error.
     """
-    return _databricks_lineage_provider().get_table_lineage(
-        full_name
+    return traced_databricks_call(
+        ctx,
+        full_name,
+        lambda trace: _databricks_lineage_provider().get_table_lineage(
+            full_name,
+            trace=trace,
+        ),
+        operation_name="databricks.table_lineage",
+        component="databricks_table_lineage",
     )
 
 
 @mcp.tool()
-def databricks_get_column_lineage(full_name: str) -> dict:
-    """
-    Retrieve registered column-level lineage events
-    from Databricks system.access.column_lineage.
+def databricks_get_column_lineage(
+    full_name: str,
+    ctx: Context,
+) -> dict:
+    """Retrieve registered column lineage. Read-only; may be incomplete.
 
-    Read-only. Results may be limited or incomplete.
+    On failure, return status=failed and a structured error.
     """
-    return _databricks_lineage_provider().get_column_lineage(
-        full_name
+    return traced_databricks_call(
+        ctx,
+        full_name,
+        lambda trace: _databricks_lineage_provider().get_column_lineage(
+            full_name,
+            trace=trace,
+        ),
+        operation_name="databricks.column_lineage",
+        component="databricks_column_lineage",
     )
 
 @mcp.tool()
@@ -343,19 +355,22 @@ def databricks_investigate_object(full_name: str) -> dict:
 def databricks_validate_grain(
     full_name: str,
     key_column: str,
+    ctx: Context,
 ) -> dict:
-    """
-    Validate the grain of a Databricks table.
+    """Validate business-key uniqueness and NULLs using exact counts.
 
-    Checks business-key uniqueness and NULL values
-    using exact SQL aggregate counts.
-
-    Returns a structured reconciliation report.
-    Read-only operation.
+    Read-only. On failure, return status=failed and a structured error.
     """
-    return DatabricksGrainProvider().validate_grain(
-        full_name=full_name,
-        key_column=key_column,
+    return traced_databricks_call(
+        ctx,
+        full_name,
+        lambda trace: DatabricksGrainProvider().validate_grain(
+            full_name=full_name,
+            key_column=key_column,
+            trace=trace,
+        ),
+        operation_name="databricks.validate_grain",
+        component="databricks_grain",
     )
 
 if __name__ == "__main__":

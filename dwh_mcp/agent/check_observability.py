@@ -144,6 +144,15 @@ class ObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(finished["status"], "completed")
         self.assertIsNone(finished["error_code"])
         client.call_tool.assert_awaited_once()
+        self.assertEqual(
+            client.call_tool.await_args.kwargs["meta"],
+            {
+                "dwh_trace": {
+                    "run_id": summary["run_id"],
+                    "tool_use_id": "call_1",
+                },
+            },
+        )
 
     async def test_retry_and_error_metrics(self):
         summary, events, client, _ = await self.run_scenario(

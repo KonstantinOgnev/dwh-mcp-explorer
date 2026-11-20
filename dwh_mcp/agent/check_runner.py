@@ -101,6 +101,7 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             log = MagicMock()
+            log.run_id = "local-test-run"
             log.directory = Path(directory)
             log.redactor = Redactor(secrets=(config.api_key,))
 
@@ -155,8 +156,16 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
             ],
             [tool_result({"full_name": TABLE})],
         )
+
         client.call_tool.assert_awaited_once_with(
-            DESCRIBE, {"full_name": TABLE}
+            DESCRIBE,
+            {"full_name": TABLE},
+            meta={
+                "dwh_trace": {
+                    "run_id": "local-test-run",
+                    "tool_use_id": "call_1",
+                },
+            },
         )
 
     async def test_other_table_never_reaches_mcp(self):

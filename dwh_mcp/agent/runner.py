@@ -172,6 +172,12 @@ async def _run_agent(
                         tools_client.call_tool(
                             block.name,
                             block.input,
+                            meta={
+                                "dwh_trace": {
+                                    "run_id": log.run_id,
+                                    "tool_use_id": block.id,
+                                },
+                            },
                         ),
                         timeout=120.0,
                     )
