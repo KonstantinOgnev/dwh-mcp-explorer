@@ -106,7 +106,7 @@ class DatabricksLineageProvider:
             entity_id,
             created_by
         FROM system.access.table_lineage
-        WHERE event_date >= date_sub(current_date(), 45)
+        WHERE event_date >= date_sub(current_date(), 90)
           AND (
             source_table_full_name = :table_name
             OR target_table_full_name = :table_name
@@ -140,7 +140,7 @@ class DatabricksLineageProvider:
             entity_type,
             entity_id
         FROM system.access.column_lineage
-        WHERE event_date >= date_sub(current_date(), 45)
+        WHERE event_date >= date_sub(current_date(), 90)
         AND (
             source_table_full_name = :table_name
             OR target_table_full_name = :table_name
