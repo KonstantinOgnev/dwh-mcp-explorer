@@ -15,6 +15,7 @@ from dwh_mcp.agent.execution_policy import (
 ExecutionPolicy,
 ExecutionPolicyError,
 )
+from dwh_mcp.agent.progress import operation_progress, notify
 
 
 async def _run_agent(
@@ -45,13 +46,18 @@ async def _run_agent(
 
             model_started = perf_counter()
 
-            response = await model.messages.create(
-                model=config.model,
-                system=SYSTEM_PROMPT,
-                max_tokens=config.max_tokens,
-                tools=tools,
-                messages=messages,
-            )
+            async with operation_progress(
+                log,
+                "Claude request",
+                operation_id=f"model-{step}",
+            ):
+                response = await model.messages.create(
+                    model=config.model,
+                    system=SYSTEM_PROMPT,
+                    max_tokens=config.max_tokens,
+                    tools=tools,
+                    messages=messages,
+                )
 
             total_input += response.usage.input_tokens
             total_output += response.usage.output_tokens
@@ -168,19 +174,24 @@ async def _run_agent(
                 payload = None
 
                 try:
-                    result = await asyncio.wait_for(
-                        tools_client.call_tool(
-                            block.name,
-                            block.input,
-                            meta={
-                                "dwh_trace": {
-                                    "run_id": log.run_id,
-                                    "tool_use_id": block.id,
+                    async with operation_progress(
+                        log,
+                        block.name,
+                        operation_id=block.id,
+                    ):
+                        result = await asyncio.wait_for(
+                            tools_client.call_tool(
+                                block.name,
+                                block.input,
+                                meta={
+                                    "dwh_trace": {
+                                        "run_id": log.run_id,
+                                        "tool_use_id": block.id,
+                                    },
                                 },
-                            },
-                        ),
-                        timeout=120.0,
-                    )
+                            ),
+                            timeout=120.0,
+                        )
 
                     payload = result.structured_content
 
@@ -231,6 +242,14 @@ async def _run_agent(
                         "message": "Tool execution failed; "
                                    "no evidence was obtained.",
                     })
+
+                notify(
+                    log,
+                    block.name,
+                    "tool_failed" if is_error else "tool_succeeded",
+                    operation_id=block.id,
+                )
+
                 policy.after_call(
                     block.name,
                     block.input,
@@ -311,6 +330,12 @@ async def run_agent(task: str, *, target_table: str) -> str:
         report = await _run_agent(task, config, log, policy)
         log.save_report(report)
         log.finish("completed")
+        notify(
+            log,
+            "Investigation",
+            "completed",
+            operation_id="run",
+        )
         return report
 
     except BaseException as error:
@@ -323,5 +348,11 @@ async def run_agent(task: str, *, target_table: str) -> str:
         log.finish(
             status,
             error_type=type(error).__name__,
+        )
+        notify(
+            log,
+            "Investigation",
+            status,
+            operation_id="run",
         )
         raise
