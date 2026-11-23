@@ -31,6 +31,8 @@ class DatabricksLineageProvider:
         statement: str,
         table_name: str,
         source: str = "system.access.table_lineage",
+        *,
+        trace: dict | None = None,
     ) -> dict:
         response = self.client.statement_execution.execute_statement(
             warehouse_id=self.warehouse_id,
@@ -49,6 +51,8 @@ class DatabricksLineageProvider:
             row_limit=50,
         )
 
+        if trace is not None:
+            trace["statement_id"] = response.statement_id
         state = (
             response.status.state.value
             if response.status and response.status.state
@@ -90,6 +94,8 @@ class DatabricksLineageProvider:
     def get_table_lineage(
         self,
         full_name: str,
+        *,
+        trace: dict | None = None,
     ) -> dict:
         sql = """
         SELECT
@@ -100,7 +106,7 @@ class DatabricksLineageProvider:
             entity_id,
             created_by
         FROM system.access.table_lineage
-        WHERE event_date >= date_sub(current_date(), 45)
+        WHERE event_date >= date_sub(current_date(), 90)
           AND (
             source_table_full_name = :table_name
             OR target_table_full_name = :table_name
@@ -113,11 +119,14 @@ class DatabricksLineageProvider:
             statement=sql,
             table_name=full_name,
             source="system.access.table_lineage",
+            trace=trace,
         )
 
     def get_column_lineage(
         self,
         full_name: str,
+        *,
+        trace: dict | None = None,
     ) -> dict:
         """Read registered column-level lineage events."""
 
@@ -131,7 +140,7 @@ class DatabricksLineageProvider:
             entity_type,
             entity_id
         FROM system.access.column_lineage
-        WHERE event_date >= date_sub(current_date(), 45)
+        WHERE event_date >= date_sub(current_date(), 90)
         AND (
             source_table_full_name = :table_name
             OR target_table_full_name = :table_name
@@ -144,4 +153,5 @@ class DatabricksLineageProvider:
             statement=sql,
             table_name=full_name,
             source="system.access.column_lineage",
+            trace=trace,
         )

@@ -31,6 +31,8 @@ class DatabricksGrainProvider:
         self,
         full_name: str,
         key_column: str,
+        *,
+        trace: dict | None = None,
     ) -> dict:
         sql = build_grain_validation_sql(full_name, key_column)
 
@@ -42,6 +44,8 @@ class DatabricksGrainProvider:
             row_limit=1,
         )
 
+        if trace is not None:
+            trace["statement_id"] = response.statement_id
         state = response.status.state.value
 
         if state != "SUCCEEDED":

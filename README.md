@@ -343,8 +343,197 @@ Explore four practical MCP-based data engineering workflows:
 
 **[Explore Demo Scenarios](demo/README.md)**
 
+## 13. Autonomous Databricks Investigation Agent
 
-## 13. Project Background
+The project also includes a command-line agent that uses the Claude API
+to select and execute a restricted set of MCP tools.
+
+Claude Desktop is not required for this mode. The runner connects to the
+MCP server in process; a separate `server.py` process is not required.
+
+### Configuration
+
+Install the locked project dependencies:
+
+```bash
+uv sync --locked
+```
+
+Configure these values in the local `.env` file:
+
+```dotenv
+ANTHROPIC_API_KEY=your_api_key
+DWH_AGENT_MODEL=your_available_model_id
+DATABRICKS_WAREHOUSE_ID=your_warehouse_id
+```
+
+Databricks authentication uses the `MARKETPLACE_LAB` CLI profile.
+The authenticated identity needs access to the target table, lineage
+system tables, and SQL Warehouse used by the requested operations.
+
+The agent requires the API key and model settings for real runs.
+The offline tests below use test configuration and substituted clients.
+
+Optional cost estimation settings:
+
+```dotenv
+DWH_INPUT_USD_PER_MILLION=
+DWH_OUTPUT_USD_PER_MILLION=
+```
+
+Supply current USD prices per million standard input and output tokens
+for the exact configured model. When either price is missing, the
+estimated cost is `null`, not zero.
+
+The estimate excludes cache-specific pricing, other API charges,
+and Databricks compute costs. It is not a billing statement.
+
+Never commit `.env`, API keys, credentials, or private run artifacts.
+
+### Run an investigation
+
+```bash
+uv run python -m dwh_mcp.agent marketplace_lab.gold.fact_orders
+```
+
+This is a real run: it sends retrieved information to the Claude API
+and may incur both Claude API and Databricks compute charges.
+
+The agent can use:
+
+- `databricks_describe_table`
+- `databricks_validate_grain`
+- `databricks_get_table_lineage`
+- `databricks_get_column_lineage`
+
+The final report is requested in Russian and distinguishes retrieved
+evidence, validation results, unknowns, and recommendations.
+
+### Execution controls
+
+The current defaults are defined in `dwh_mcp/agent/config.py`:
+
+| Setting | Default |
+|---|---:|
+| Model turns | 10 |
+| Tool-call attempts | 8 |
+| Maximum output tokens per model response | 8192 |
+| MCP call timeout | 120 seconds |
+
+The output-token setting is not a total token or monetary budget.
+
+Execution policy checks run before MCP calls:
+
+- Only the explicitly supplied target table is allowed.
+- Only the allowed tools and expected argument names are accepted.
+- Identical successful calls cannot be repeated.
+- A matching call may be retried once only after a structured,
+  explicitly retryable `SOURCE_UNAVAILABLE` or `RATE_LIMITED` result.
+- Retries count toward the tool-call limit.
+- Metadata `OBJECT_NOT_FOUND` blocks subsequent tool execution.
+- Policy violations stop the run and are recorded as failures.
+- No tools are executed on the last allowed model turn.
+
+The runner marks truncated responses and exhausted model-turn limits
+as incomplete rather than saving them as completed reports.
+
+These controls apply to this agent runner. They do not replace
+Databricks permissions or impose the same policy on other MCP clients.
+
+### Run artifacts and observability
+
+Each run creates a directory under `runs/<run_id>/`.
+
+| File | Contents |
+|---|---|
+| `run.json` | Task, settings, final status, duration, metrics, latency statistics, estimated cost |
+| `events.jsonl` | Model responses, tool requests/results, policy blocks, progress events |
+| `tools.json` | Tool definitions available to the agent |
+| `prompt.json` | System instruction used for the run |
+| `report.md` | Completed report, when available |
+| `partial_report.md` | Available response text when generation hits the output-token limit |
+
+The `runs/` directory is excluded from Git.
+
+Metrics include model responses received, tool attempts, tool errors,
+retries, blocked calls, and reported input/output tokens.
+Requests that fail before a model response is received are not counted
+as received model responses and may have unknown token usage.
+
+Latency summaries use nearest-rank p50/p95 and include sample counts.
+They describe recorded observations within one run, not a historical
+service-level benchmark. Tool latency includes failed completed attempts.
+
+Correlation information links:
+
+- Agent `run_id`
+- Model `tool_use_id`
+- MCP request ID
+- Databricks SQL `statement_id`, when returned
+
+The `_trace` field in tool results contains diagnostic correlation data.
+This is correlation tracing, without a separate distributed-tracing backend.
+Unity Catalog metadata reads do not produce SQL statement IDs.
+
+Console progress reports operation start, periodic waiting, completion,
+and errors. Waiting notifications are emitted approximately every
+15 seconds while the event loop can run. They do not estimate a
+completion percentage. An API response finishing does not imply that
+the underlying tool operation succeeded.
+
+### Redaction scope
+
+New artifacts written through `RunLogger` mask:
+
+- The configured Claude API key
+- Recognized password, token, secret, authorization, and cookie fields
+- Bearer-token patterns and email addresses
+
+Nested JSON stored inside strings is also inspected.
+Reports and partial reports apply text redaction.
+
+This is a defined rule set, not comprehensive personal-data detection.
+Historical artifacts are not rewritten. Redaction at artifact-write time
+does not sanitize tool data before it is sent to Claude.
+Progress messages are redacted; other console output and third-party
+logs are not comprehensively covered.
+
+### Offline validation
+
+Run the explicitly selected offline suite:
+
+```bash
+uv run python -m unittest dwh_mcp.agent.check_execution_policy dwh_mcp.agent.check_runner dwh_mcp.agent.check_observability dwh_mcp.agent.check_redaction dwh_mcp.agent.check_run_statistics dwh_mcp.agent.check_trace_context dwh_mcp.agent.check_sql_trace dwh_mcp.agent.check_progress
+```
+
+These tests cover execution policy, runner behavior, artifacts,
+redaction, latency/cost calculations, MCP correlation, SQL statement IDs,
+and progress-task cleanup.
+
+Claude and Databricks calls are substituted. MCP correlation tests
+use the real local MCP transport with substituted providers or SDK clients.
+
+Other diagnostic scripts are not necessarily offline:
+`check_error_response` queries Databricks, and `test_model` calls Claude.
+Avoid broad test discovery when only offline execution is intended.
+
+### Current limitations
+
+- Prompt instructions guide evidence interpretation but do not guarantee
+  factual correctness of every generated statement.
+- The runner does not programmatically verify that every selected grain
+  column was obtained from metadata.
+- Structured SDK error classification does not fully classify SQL errors
+  converted by providers into generic runtime exceptions.
+- `NotFound` indicates that the object was not found for the request;
+  it does not independently rule out visibility restrictions.
+- Lineage queries currently use a 90-day lookback and return at most
+  50 records per call. Missing edges do not prove missing dependencies.
+- Token accounting and cost estimates are limited to recorded usage.
+- Run logs support diagnosis; they are not a response cache or a
+  resumable execution checkpoint.
+
+## 14. Project Background
 
 DWH MCP Explorer was developed as a practical engineering project exploring the use of Model Context Protocol in data engineering.
 
